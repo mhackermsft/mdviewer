@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MDViewer</title>
+    <script src="https://assets.local/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #e0e0e0;
+            --page-bg: #ffffff;
+            --text-color: #1a1a1a;
+            --code-bg: #f5f5f5;
+            --border-color: #ddd;
+            --link-color: #0066cc;
+            --shadow-color: rgba(0,0,0,0.2);
+            --table-stripe: #fafafa;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #2d2d2d;
+            --page-bg: #1e1e1e;
+            --text-color: #d4d4d4;
+            --code-bg: #2d2d2d;
+            --border-color: #444;
+            --link-color: #4da6ff;
+            --shadow-color: rgba(0,0,0,0.5);
+            --table-stripe: #262626;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: var(--text-color);
+            padding: 20px 0;
+        }
+
+        .page {
+            width: 8.5in;
+            min-height: 11in;
+            margin: 20px auto;
+            padding: 1in;
+            background-color: var(--page-bg);
+            box-shadow: 0 2px 10px var(--shadow-color);
+            line-height: 1.6;
+            font-size: 11pt;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            margin-top: 1.2em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        h1:first-child, h2:first-child, h3:first-child { margin-top: 0; }
+        h1 { font-size: 2em; border-bottom: 2px solid var(--border-color); padding-bottom: 0.3em; }
+        h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
+        h3 { font-size: 1.25em; }
+        h4 { font-size: 1.1em; }
+        p { margin-bottom: 1em; }
+
+        /* Code */
+        code {
+            background: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background: var(--code-bg);
+            padding: 1em;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 1em;
+            border: 1px solid var(--border-color);
+        }
+        pre code { background: none; padding: 0; border: none; }
+
+        /* Tables */
+        table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
+        th, td { border: 1px solid var(--border-color); padding: 0.5em 0.75em; text-align: left; }
+        th { background: var(--code-bg); font-weight: 600; }
+        tr:nth-child(even) { background: var(--table-stripe); }
+
+        /* Lists */
+        ul, ol { margin-bottom: 1em; padding-left: 2em; }
+        li { margin-bottom: 0.25em; }
+        li > ul, li > ol { margin-bottom: 0; margin-top: 0.25em; }
+
+        /* Links */
+        a { color: var(--link-color); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* Images */
+        img { max-width: 100%; height: auto; border-radius: 4px; }
+
+        /* Blockquotes */
+        blockquote {
+            border-left: 4px solid var(--link-color);
+            padding: 0.5em 1em;
+            margin: 0 0 1em 0;
+            background: var(--code-bg);
+            border-radius: 0 4px 4px 0;
+        }
+        blockquote p:last-child { margin-bottom: 0; }
+
+        /* Horizontal rules */
+        hr { border: none; border-top: 1px solid var(--border-color); margin: 1.5em 0; }
+
+        /* Task lists */
+        .contains-task-list { list-style-type: none; padding-left: 0.5em; }
+        .task-list-item input[type="checkbox"] { margin-right: 0.5em; }
+
+        /* Mermaid diagrams */
+        .mermaid, pre > code.language-mermaid {
+            display: flex;
+            justify-content: center;
+            margin: 1em 0;
+            overflow-x: auto;
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+        }
+
+        /* Emoji */
+        .emoji { font-style: normal; }
+
+        /* Print styles */
+        @media print {
+            body { background: none !important; padding: 0 !important; }
+            .page {
+                box-shadow: none !important;
+                margin: 0 !important;
+                padding: 0.5in !important;
+                width: auto !important;
+                min-height: auto !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page" id="content">
+        {{CONTENT}}
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: '{{MERMAID_THEME}}',
+                securityLevel: 'loose',
+                flowchart: { useMaxWidth: true },
+                sequence: { useMaxWidth: true }
+            });
+
+            // Find all mermaid blocks - handle both Markdig output formats
+            var mermaidBlocks = document.querySelectorAll('.mermaid, pre > code.language-mermaid');
+            var renderPromises = [];
+
+            mermaidBlocks.forEach(function(block, index) {
+                var code = block.textContent.trim();
+                var container = document.createElement('div');
+                container.className = 'mermaid-rendered';
+                container.style.display = 'flex';
+                container.style.justifyContent = 'center';
+                container.style.margin = '1em 0';
+
+                if (block.tagName === 'CODE') {
+                    // <pre><code class="language-mermaid">...</code></pre>
+                    block.parentElement.replaceWith(container);
+                } else {
+                    block.replaceWith(container);
+                }
+
+                renderPromises.push(
+                    mermaid.render('mermaid-' + index, code).then(function(result) {
+                        container.innerHTML = result.svg;
+                    }).catch(function(err) {
+                        container.innerHTML = '<pre style="color:red;">Mermaid Error: ' + err.message + '</pre>';
+                    })
+                );
+            });
+
+            Promise.all(renderPromises).then(function() {
+                window.chrome.webview.postMessage('render-complete');
+            });
+        });
+
+        function setTheme(isDark) {
+            if (isDark) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+        }
+    </script>
+</body>
+</html>
