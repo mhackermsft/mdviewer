@@ -1,0 +1,42 @@
+name: Build and Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          dotnet-quality: preview
+
+      - name: Restore dependencies
+        run: dotnet restore MDViewer/MDViewer.csproj
+
+      - name: Publish single-file EXE
+        run: dotnet publish MDViewer/MDViewer.csproj -p:PublishProfile=SingleFile --no-restore
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MDViewer
+          path: MDViewer/bin/publish/MDViewer.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MDViewer/bin/publish/MDViewer.exe
+          generate_release_notes: true
