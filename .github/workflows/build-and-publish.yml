@@ -23,7 +23,7 @@ jobs:
           dotnet-quality: preview
 
       - name: Restore dependencies
-        run: dotnet restore MDViewer/MDViewer.csproj
+        run: dotnet restore MDViewer/MDViewer.csproj -r win-x64
 
       - name: Publish single-file EXE
         run: dotnet publish MDViewer/MDViewer.csproj -p:PublishProfile=SingleFile --no-restore
