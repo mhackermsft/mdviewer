@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private string? _currentFilePath;
     private string? _assetsFolder;
     private bool _webViewReady;
+    private bool _renderComplete;
     private double _zoomFactor = 1.0;
     private System.Timers.Timer? _debounceTimer;
 
@@ -78,6 +79,14 @@ public partial class MainWindow : Window
                 CoreWebView2HostResourceAccessKind.Allow);
 
             _webViewReady = true;
+
+            // Track when Mermaid diagrams finish rendering
+            WebView.CoreWebView2.WebMessageReceived += (_, args) =>
+            {
+                if (args.TryGetWebMessageAsString() == "render-complete")
+                    _renderComplete = true;
+            };
+
             EnableControls(true);
             StatusLabel.Text = "Ready";
         }
@@ -103,6 +112,7 @@ public partial class MainWindow : Window
     private void EnableControls(bool enabled)
     {
         PrintButton.IsEnabled = enabled;
+        ExportPdfButton.IsEnabled = enabled;
         ZoomInButton.IsEnabled = enabled;
         ZoomOutButton.IsEnabled = enabled;
         ZoomResetButton.IsEnabled = enabled;
@@ -123,6 +133,7 @@ public partial class MainWindow : Window
             var markdown = await File.ReadAllTextAsync(filePath);
             var html = _renderService.RenderToHtml(markdown, _themeService.IsDarkTheme);
 
+            _renderComplete = false;
             WebView.NavigateToString(html);
             StatusLabel.Text = $"Loaded — {fileName}";
 
@@ -222,6 +233,87 @@ public partial class MainWindow : Window
 
     #endregion
 
+    #region Export PDF
+
+    private async void ExportPdf_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_webViewReady || _currentFilePath == null) return;
+
+        var defaultName = System.IO.Path.GetFileNameWithoutExtension(_currentFilePath) + ".pdf";
+        var defaultDir = System.IO.Path.GetDirectoryName(_currentFilePath) ?? "";
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "PDF files (*.pdf)|*.pdf",
+            Title = "Export to PDF",
+            FileName = defaultName,
+            InitialDirectory = defaultDir
+        };
+
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            StatusLabel.Text = "Exporting PDF...";
+            ExportPdfButton.IsEnabled = false;
+
+            // Force light mode for PDF export so output always has a white background
+            var wasDark = _themeService.IsDarkTheme;
+            if (wasDark)
+            {
+                var markdown = await File.ReadAllTextAsync(_currentFilePath);
+                var lightHtml = _renderService.RenderToHtml(markdown, isDarkTheme: false);
+                _renderComplete = false;
+                WebView.NavigateToString(lightHtml);
+            }
+
+            // Wait for Mermaid diagrams to finish rendering (up to 10 seconds)
+            for (var i = 0; i < 100 && !_renderComplete; i++)
+                await Task.Delay(100);
+
+            var settings = WebView.CoreWebView2.Environment.CreatePrintSettings();
+            settings.PageWidth = 8.5;
+            settings.PageHeight = 11.0;
+            settings.MarginTop = 0;
+            settings.MarginBottom = 0;
+            settings.MarginLeft = 0;
+            settings.MarginRight = 0;
+            settings.ShouldPrintBackgrounds = true;
+            settings.ScaleFactor = 1.0;
+
+            var success = await WebView.CoreWebView2.PrintToPdfAsync(dialog.FileName, settings);
+
+            if (success)
+            {
+                StatusLabel.Text = $"Exported — {System.IO.Path.GetFileName(dialog.FileName)}";
+            }
+            else
+            {
+                StatusLabel.Text = "PDF export failed";
+                MessageBox.Show("PDF export failed. The file may be in use by another application.",
+                    "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = "PDF export failed";
+            MessageBox.Show($"PDF export failed:\n{ex.Message}",
+                "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ExportPdfButton.IsEnabled = true;
+
+            // Restore dark mode if it was active before export
+            if (_themeService.IsDarkTheme && _currentFilePath != null)
+            {
+                await OpenMarkdownFile(_currentFilePath);
+            }
+        }
+    }
+
+    #endregion
+
     #region Zoom
 
     private void UpdateZoom()
@@ -274,6 +366,13 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.S)
+        {
+            ExportPdf_Click(sender, e);
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
 
         switch (e.Key)

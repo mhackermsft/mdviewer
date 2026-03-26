@@ -51,6 +51,10 @@
                             ToolTip="Print (Ctrl+P)" x:Name="PrintButton" IsEnabled="False">
                         <TextBlock Text="🖨️ Print" FontSize="13"/>
                     </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Click="ExportPdf_Click"
+                            ToolTip="Export to PDF (Ctrl+Shift+S)" x:Name="ExportPdfButton" IsEnabled="False">
+                        <TextBlock Text="📄 Export PDF" FontSize="13"/>
+                    </Button>
                     <Rectangle Width="1" Fill="#CCCCCC" Margin="8,2"/>
                 </StackPanel>
 

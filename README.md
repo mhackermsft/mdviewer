@@ -13,6 +13,7 @@ A lightweight desktop application for viewing Markdown files with full **Mermaid
 - **8.5 × 11 Page Layout** — Document displayed in a print-ready page format with white page on a neutral background
 - **Zoom Controls** — Zoom in/out from 25% to 500% with keyboard shortcuts
 - **Print Support** — Print rendered documents directly via the system print dialog
+- **Export to PDF** — Export the rendered document (including all diagrams and images) to a PDF file
 - **System Theme** — Automatically follows Windows light/dark theme setting
 - **File Association** — Register as the default `.md` file handler to open files with a double-click
 - **Auto-Reload** — Automatically re-renders when the open file changes on disk
@@ -57,6 +58,7 @@ The output will be in `bin\publish\`. The resulting `MDViewer.exe` is a fully se
 |--------|----------|
 | Open file | `Ctrl+O` |
 | Print | `Ctrl+P` |
+| Export to PDF | `Ctrl+Shift+S` |
 | Zoom in | `Ctrl+Plus` |
 | Zoom out | `Ctrl+Minus` |
 | Reset zoom | `Ctrl+0` |
