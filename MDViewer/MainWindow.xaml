@@ -43,6 +43,10 @@
             <DockPanel>
                 <!-- Left side: File operations -->
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <Button Style="{StaticResource ToolbarButton}" Click="NavigateBack_Click"
+                            ToolTip="Go back (Alt+Left)" x:Name="BackButton" IsEnabled="False">
+                        <TextBlock Text="← Back" FontSize="13"/>
+                    </Button>
                     <Button Style="{StaticResource ToolbarButton}" Click="OpenFile_Click"
                             ToolTip="Open file (Ctrl+O)">
                         <TextBlock Text="📂 Open" FontSize="13"/>

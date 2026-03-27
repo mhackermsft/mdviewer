@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using MDViewer.Services;
@@ -17,6 +19,7 @@ public partial class MainWindow : Window
     private bool _renderComplete;
     private double _zoomFactor = 1.0;
     private System.Timers.Timer? _debounceTimer;
+    private readonly Stack<string> _navigationHistory = new();
 
     private const double MinZoom = 0.25;
     private const double MaxZoom = 5.0;
@@ -80,12 +83,32 @@ public partial class MainWindow : Window
 
             _webViewReady = true;
 
-            // Track when Mermaid diagrams finish rendering
-            WebView.CoreWebView2.WebMessageReceived += (_, args) =>
+            // Handle messages from the WebView (Mermaid completion and link navigation)
+            WebView.CoreWebView2.WebMessageReceived += async (_, args) =>
             {
-                if (args.TryGetWebMessageAsString() == "render-complete")
+                var message = args.TryGetWebMessageAsString();
+                if (message == "render-complete")
+                {
                     _renderComplete = true;
+                    return;
+                }
+
+                try
+                {
+                    using var json = JsonDocument.Parse(message);
+                    if (json.RootElement.TryGetProperty("type", out var type)
+                        && type.GetString() == "navigate"
+                        && json.RootElement.TryGetProperty("href", out var hrefProp))
+                    {
+                        var href = hrefProp.GetString();
+                        if (href != null)
+                            await HandleLinkNavigation(href);
+                    }
+                }
+                catch { /* Not JSON — ignore */ }
             };
+
+            WebView.CoreWebView2.NewWindowRequested += (_, args) => args.Handled = true;
 
             EnableControls(true);
             StatusLabel.Text = "Ready";
@@ -183,6 +206,72 @@ public partial class MainWindow : Window
         };
     }
 
+    #region Navigation
+
+    private async Task HandleLinkNavigation(string href)
+    {
+        // External URLs and mailto — open in default browser/app
+        if (href.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || href.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+        {
+            try { Process.Start(new ProcessStartInfo(href) { UseShellExecute = true }); }
+            catch { /* silently ignore */ }
+            return;
+        }
+
+        if (_currentFilePath == null) return;
+
+        var currentDir = Path.GetDirectoryName(_currentFilePath);
+        if (currentDir == null) return;
+
+        // Separate any fragment (e.g. "file.md#section")
+        string? anchor = null;
+        var hashIndex = href.IndexOf('#');
+        if (hashIndex >= 0)
+        {
+            anchor = href[(hashIndex + 1)..];
+            href = href[..hashIndex];
+        }
+
+        // If only an anchor was provided, there's no file to navigate to
+        if (string.IsNullOrEmpty(href)) return;
+
+        var targetPath = Path.GetFullPath(Path.Combine(currentDir, href));
+        var ext = Path.GetExtension(targetPath).ToLowerInvariant();
+
+        if ((ext is ".md" or ".markdown") && File.Exists(targetPath))
+        {
+            _navigationHistory.Push(_currentFilePath);
+            BackButton.IsEnabled = true;
+            await OpenMarkdownFile(targetPath);
+
+            if (!string.IsNullOrEmpty(anchor))
+            {
+                var escaped = anchor.Replace("'", "\\'");
+                await WebView.CoreWebView2.ExecuteScriptAsync(
+                    $"document.getElementById('{escaped}')?.scrollIntoView({{behavior:'smooth'}})");
+            }
+        }
+        else if (File.Exists(targetPath))
+        {
+            // Non-markdown files — open with default handler
+            try { Process.Start(new ProcessStartInfo(targetPath) { UseShellExecute = true }); }
+            catch { /* silently ignore */ }
+        }
+    }
+
+    private async void NavigateBack_Click(object sender, RoutedEventArgs e)
+    {
+        if (_navigationHistory.Count == 0) return;
+
+        var previousFile = _navigationHistory.Pop();
+        BackButton.IsEnabled = _navigationHistory.Count > 0;
+        await OpenMarkdownFile(previousFile);
+    }
+
+    #endregion
+
     #region File Operations
 
     private void ShowOpenFileDialog()
@@ -196,6 +285,11 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog() == true)
         {
+            if (_currentFilePath != null)
+            {
+                _navigationHistory.Push(_currentFilePath);
+                BackButton.IsEnabled = true;
+            }
             _ = OpenMarkdownFile(dialog.FileName);
         }
         else if (_currentFilePath == null)
@@ -369,6 +463,13 @@ public partial class MainWindow : Window
         if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.S)
         {
             ExportPdf_Click(sender, e);
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Alt && e.SystemKey == Key.Left)
+        {
+            NavigateBack_Click(sender, e);
             e.Handled = true;
             return;
         }

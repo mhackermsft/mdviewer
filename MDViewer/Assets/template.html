@@ -203,6 +203,27 @@
                 document.documentElement.removeAttribute('data-theme');
             }
         }
+
+        // Intercept link clicks for in-app navigation
+        document.addEventListener('click', function(e) {
+            var link = e.target.closest('a');
+            if (!link) return;
+
+            var href = link.getAttribute('href');
+            if (!href) return;
+
+            // Anchor links: scroll within the current page
+            if (href.startsWith('#')) {
+                e.preventDefault();
+                var target = document.getElementById(href.substring(1));
+                if (target) target.scrollIntoView({ behavior: 'smooth' });
+                return;
+            }
+
+            // All other links: delegate to the host application
+            e.preventDefault();
+            window.chrome.webview.postMessage(JSON.stringify({ type: 'navigate', href: href }));
+        });
     </script>
 </body>
 </html>
