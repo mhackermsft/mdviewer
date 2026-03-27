@@ -135,7 +135,7 @@ public partial class MainWindow : Window
     private void EnableControls(bool enabled)
     {
         PrintButton.IsEnabled = enabled;
-        ExportPdfButton.IsEnabled = enabled;
+        ExportButton.IsEnabled = enabled;
         ZoomInButton.IsEnabled = enabled;
         ZoomOutButton.IsEnabled = enabled;
         ZoomResetButton.IsEnabled = enabled;
@@ -327,19 +327,38 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region Export PDF
+    #region Export
 
-    private async void ExportPdf_Click(object sender, RoutedEventArgs e)
+    private async void Export_Click(object sender, RoutedEventArgs e)
     {
         if (!_webViewReady || _currentFilePath == null) return;
 
-        var defaultName = System.IO.Path.GetFileNameWithoutExtension(_currentFilePath) + ".pdf";
-        var defaultDir = System.IO.Path.GetDirectoryName(_currentFilePath) ?? "";
+        // Scan for linked markdown documents
+        var collector = new Services.LinkedDocumentCollector();
+        var linkedDocs = collector.CollectLinkedDocuments(_currentFilePath);
+        var linkedDocCount = linkedDocs.Count - 1; // exclude the root document
+
+        // Show export options dialog
+        var exportDialog = new ExportDialog(linkedDocCount) { Owner = this };
+        if (exportDialog.ShowDialog() != true) return;
+
+        var includeLinkedDocs = linkedDocCount > 0 && exportDialog.IncludeLinkedDocuments;
+
+        if (exportDialog.IsPdfFormat)
+            await ExportAsPdf(linkedDocs, includeLinkedDocs);
+        else
+            await ExportAsHtml(linkedDocs, includeLinkedDocs);
+    }
+
+    private async Task ExportAsPdf(IReadOnlyList<Services.LinkedDocument> linkedDocs, bool includeLinkedDocs)
+    {
+        var defaultName = System.IO.Path.GetFileNameWithoutExtension(_currentFilePath!) + ".pdf";
+        var defaultDir = System.IO.Path.GetDirectoryName(_currentFilePath!) ?? "";
 
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Filter = "PDF files (*.pdf)|*.pdf",
-            Title = "Export to PDF",
+            Title = "Export as PDF",
             FileName = defaultName,
             InitialDirectory = defaultDir
         };
@@ -348,21 +367,30 @@ public partial class MainWindow : Window
 
         try
         {
-            StatusLabel.Text = "Exporting PDF...";
-            ExportPdfButton.IsEnabled = false;
+            var docCount = includeLinkedDocs ? linkedDocs.Count : 1;
+            StatusLabel.Text = includeLinkedDocs
+                ? $"Exporting PDF ({docCount} documents)..."
+                : "Exporting PDF...";
+            ExportButton.IsEnabled = false;
 
-            // Force light mode for PDF export so output always has a white background
-            var wasDark = _themeService.IsDarkTheme;
-            if (wasDark)
+            // Build HTML for PDF (always light mode, with page breaks)
+            string htmlForPdf;
+            if (includeLinkedDocs)
             {
-                var markdown = await File.ReadAllTextAsync(_currentFilePath);
-                var lightHtml = _renderService.RenderToHtml(markdown, isDarkTheme: false);
-                _renderComplete = false;
-                WebView.NavigateToString(lightHtml);
+                htmlForPdf = _renderService.RenderMergedToHtml(linkedDocs, isDarkTheme: false, addPageBreaks: true);
+            }
+            else
+            {
+                var markdown = await File.ReadAllTextAsync(_currentFilePath!);
+                htmlForPdf = _renderService.RenderToHtml(markdown, isDarkTheme: false);
             }
 
-            // Wait for Mermaid diagrams to finish rendering (up to 10 seconds)
-            for (var i = 0; i < 100 && !_renderComplete; i++)
+            _renderComplete = false;
+            WebView.NavigateToString(htmlForPdf);
+
+            // Wait for Mermaid diagrams (scale timeout with document count)
+            var maxWaitIterations = docCount * 100;
+            for (var i = 0; i < maxWaitIterations && !_renderComplete; i++)
                 await Task.Delay(100);
 
             var settings = WebView.CoreWebView2.Environment.CreatePrintSettings();
@@ -378,9 +406,7 @@ public partial class MainWindow : Window
             var success = await WebView.CoreWebView2.PrintToPdfAsync(dialog.FileName, settings);
 
             if (success)
-            {
                 StatusLabel.Text = $"Exported — {System.IO.Path.GetFileName(dialog.FileName)}";
-            }
             else
             {
                 StatusLabel.Text = "PDF export failed";
@@ -396,13 +422,63 @@ public partial class MainWindow : Window
         }
         finally
         {
-            ExportPdfButton.IsEnabled = true;
-
-            // Restore dark mode if it was active before export
-            if (_themeService.IsDarkTheme && _currentFilePath != null)
-            {
+            ExportButton.IsEnabled = true;
+            if (_currentFilePath != null)
                 await OpenMarkdownFile(_currentFilePath);
+        }
+    }
+
+    private async Task ExportAsHtml(IReadOnlyList<Services.LinkedDocument> linkedDocs, bool includeLinkedDocs)
+    {
+        var defaultName = System.IO.Path.GetFileNameWithoutExtension(_currentFilePath!) + ".html";
+        var defaultDir = System.IO.Path.GetDirectoryName(_currentFilePath!) ?? "";
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "HTML files (*.html)|*.html",
+            Title = "Export as HTML",
+            FileName = defaultName,
+            InitialDirectory = defaultDir
+        };
+
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            var docCount = includeLinkedDocs ? linkedDocs.Count : 1;
+            StatusLabel.Text = includeLinkedDocs
+                ? $"Exporting HTML ({docCount} documents)..."
+                : "Exporting HTML...";
+            ExportButton.IsEnabled = false;
+
+            // Build HTML matching the current system theme, no page breaks
+            string html;
+            if (includeLinkedDocs)
+            {
+                html = _renderService.RenderMergedToHtml(
+                    linkedDocs, _themeService.IsDarkTheme, addPageBreaks: false);
             }
+            else
+            {
+                var markdown = await File.ReadAllTextAsync(_currentFilePath!);
+                html = _renderService.RenderToHtml(markdown, _themeService.IsDarkTheme);
+            }
+
+            // Convert to self-contained standalone HTML
+            html = _renderService.ConvertToStandaloneHtml(html);
+
+            await File.WriteAllTextAsync(dialog.FileName, html);
+            StatusLabel.Text = $"Exported — {System.IO.Path.GetFileName(dialog.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = "HTML export failed";
+            MessageBox.Show($"HTML export failed:\n{ex.Message}",
+                "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ExportButton.IsEnabled = true;
         }
     }
 
@@ -462,7 +538,7 @@ public partial class MainWindow : Window
     {
         if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.S)
         {
-            ExportPdf_Click(sender, e);
+            Export_Click(sender, e);
             e.Handled = true;
             return;
         }
