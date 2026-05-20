@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private bool _webViewReady;
     private bool _renderComplete;
     private double _zoomFactor = 1.0;
+    private double? _pendingScrollRatio;
     private System.Timers.Timer? _debounceTimer;
     private readonly Stack<string> _navigationHistory = new();
 
@@ -90,6 +91,14 @@ public partial class MainWindow : Window
                 if (message == "render-complete")
                 {
                     _renderComplete = true;
+                    if (_pendingScrollRatio is double ratio)
+                    {
+                        _pendingScrollRatio = null;
+                        var ratioStr = ratio.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        await WebView.ExecuteScriptAsync(
+                            "(function(){var h=document.documentElement.scrollHeight-window.innerHeight;" +
+                            "if(h>0){window.scrollTo(0,h*" + ratioStr + ");}})()");
+                    }
                     return;
                 }
 
@@ -147,6 +156,30 @@ public partial class MainWindow : Window
 
         try
         {
+            // If reloading the same file, capture the current scroll position
+            // so we can restore it after re-render.
+            if (_currentFilePath != null
+                && string.Equals(_currentFilePath, filePath, StringComparison.OrdinalIgnoreCase)
+                && _renderComplete)
+            {
+                try
+                {
+                    var result = await WebView.ExecuteScriptAsync(
+                        "(function(){var h=document.documentElement.scrollHeight-window.innerHeight;" +
+                        "return h>0?(window.scrollY/h):0;})()");
+                    if (double.TryParse(result, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var ratio))
+                    {
+                        _pendingScrollRatio = Math.Clamp(ratio, 0.0, 1.0);
+                    }
+                }
+                catch { /* ignore — fall back to top of document */ }
+            }
+            else
+            {
+                _pendingScrollRatio = null;
+            }
+
             _currentFilePath = filePath;
             var fileName = System.IO.Path.GetFileName(filePath);
             Title = $"{fileName} — MDViewer";
