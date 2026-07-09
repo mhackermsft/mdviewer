@@ -21,10 +21,10 @@ public class MarkdownRenderService
         _mermaidJs = LoadEmbeddedResource("MDViewer.Assets.mermaid.min.js");
     }
 
-    public string RenderToHtml(string markdown, bool isDarkTheme)
+    public string RenderToHtml(string markdown, bool isDarkTheme, string? baseHref = null)
     {
         var htmlContent = Markdown.ToHtml(markdown, _pipeline);
-        return ApplyTemplate(htmlContent, isDarkTheme);
+        return ApplyTemplate(htmlContent, isDarkTheme, baseHref);
     }
 
     /// <summary>
@@ -82,12 +82,17 @@ public class MarkdownRenderService
         return html;
     }
 
-    private string ApplyTemplate(string htmlContent, bool isDarkTheme)
+    private string ApplyTemplate(string htmlContent, bool isDarkTheme, string? baseHref = null)
     {
         var mermaidTheme = isDarkTheme ? "dark" : "default";
 
+        var baseTag = string.IsNullOrEmpty(baseHref)
+            ? ""
+            : $"<base href=\"{System.Net.WebUtility.HtmlEncode(baseHref)}\">";
+
         var html = _htmlTemplate
             .Replace("{{CONTENT}}", htmlContent)
+            .Replace("{{BASE_HREF}}", baseTag)
             .Replace("{{MERMAID_THEME}}", mermaidTheme);
 
         if (isDarkTheme)

@@ -26,6 +26,10 @@ public partial class MainWindow : Window
     private const double MaxZoom = 5.0;
     private const double ZoomStep = 0.1;
 
+    // Virtual host used to resolve relative resource paths (e.g. images)
+    // referenced by the currently open document.
+    private const string DocumentVirtualHost = "mddoc.local";
+
     public MainWindow()
     {
         InitializeComponent();
@@ -187,7 +191,8 @@ public partial class MainWindow : Window
             StatusLabel.Text = $"Loading {fileName}...";
 
             var markdown = await File.ReadAllTextAsync(filePath);
-            var html = _renderService.RenderToHtml(markdown, _themeService.IsDarkTheme);
+            var baseHref = MapDocumentFolder(filePath);
+            var html = _renderService.RenderToHtml(markdown, _themeService.IsDarkTheme, baseHref);
 
             _renderComplete = false;
             WebView.NavigateToString(html);
@@ -201,6 +206,25 @@ public partial class MainWindow : Window
             MessageBox.Show($"Failed to load file:\n{ex.Message}",
                 "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    /// <summary>
+    /// Maps the folder containing <paramref name="filePath"/> to a WebView2 virtual
+    /// host so that relative resource paths (such as images) resolve correctly when
+    /// the rendered HTML is loaded via NavigateToString (which has no file base URL).
+    /// Returns the base href to embed in the document, or null if unavailable.
+    /// </summary>
+    private string? MapDocumentFolder(string filePath)
+    {
+        var directory = System.IO.Path.GetDirectoryName(filePath);
+        if (string.IsNullOrEmpty(directory))
+            return null;
+
+        WebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+            DocumentVirtualHost, directory,
+            CoreWebView2HostResourceAccessKind.Allow);
+
+        return $"https://{DocumentVirtualHost}/";
     }
 
     private void SetupFileWatcher(string filePath)
@@ -415,7 +439,8 @@ public partial class MainWindow : Window
             else
             {
                 var markdown = await File.ReadAllTextAsync(_currentFilePath!);
-                htmlForPdf = _renderService.RenderToHtml(markdown, isDarkTheme: false);
+                var baseHref = MapDocumentFolder(_currentFilePath!);
+                htmlForPdf = _renderService.RenderToHtml(markdown, isDarkTheme: false, baseHref);
             }
 
             _renderComplete = false;
