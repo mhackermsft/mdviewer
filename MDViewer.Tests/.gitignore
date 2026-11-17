@@ -1,0 +1,2 @@
+# dotnet test --logger trx output (also produced by the CI test job)
+TestResults/

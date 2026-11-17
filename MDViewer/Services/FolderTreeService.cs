@@ -51,14 +51,35 @@ public sealed class FolderTree
 
 public static class FolderTreeService
 {
-    private static readonly HashSet<string> ExcludedDirectories =
-        new(StringComparer.OrdinalIgnoreCase) { "node_modules" };
+    /// <summary>
+    /// Dependency, build and tool folders of programming-language ecosystems,
+    /// skipped by exact name (case-insensitive) at any level below the root.
+    /// Generic names (build, dist, out, target, vendor, packages, lib) are
+    /// deliberately absent: they may hold the user's own documentation.
+    /// </summary>
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // JavaScript / TypeScript
+        "node_modules", "bower_components", "jspm_packages",
+        ".next", ".nuxt", ".svelte-kit", ".angular", ".parcel-cache", ".turbo",
+        // .NET
+        "bin", "obj", ".vs",
+        // Python
+        "__pycache__", ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        // Java / Kotlin
+        ".gradle", ".m2",
+        // Version control
+        ".git", ".svn", ".hg",
+        // IDEs
+        ".idea",
+    };
 
+    // Hidden, system and reparse-point (symlink / junction) entries are included.
     private static readonly EnumerationOptions EnumerationOptions = new()
     {
         IgnoreInaccessible = true,
         RecurseSubdirectories = false,
-        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
+        AttributesToSkip = 0
     };
 
     public static bool IsMarkdownFile(string path)
@@ -77,23 +98,62 @@ public static class FolderTreeService
     {
         var root = Path.GetFullPath(rootPath);
         var index = new Dictionary<string, FileTreeNode>(StringComparer.OrdinalIgnoreCase);
-        var nodes = BuildChildren(root, null, index);
+
+        // Real (link-resolved) folders already scanned; guards against cycles
+        // created by symlinks and junctions. Nodes and the index keep the
+        // logical path under the root.
+        var visitedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (ResolveRealPath(root) is { } realRoot)
+            visitedTargets.Add(realRoot);
+
+        var nodes = BuildChildren(root, null, index, visitedTargets);
         return new FolderTree(root, nodes, index);
     }
 
-    private static List<FileTreeNode> BuildChildren(
+    /// <summary>
+    /// Scans <paramref name="directory"/> with the same rules as <see cref="Build"/>
+    /// (exclusions, pruning, natural order, link-cycle guard) and returns its
+    /// children, parented to <paramref name="parent"/> and added to
+    /// <paramref name="index"/>. Used by the Reversa views for folder subtrees.
+    /// </summary>
+    internal static List<FileTreeNode> BuildSubtree(
         string directory, FileTreeNode? parent, Dictionary<string, FileTreeNode> index)
+    {
+        var full = Path.GetFullPath(directory);
+        var visitedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (ResolveRealPath(full) is { } realDir)
+            visitedTargets.Add(realDir);
+        return BuildChildren(full, parent, index, visitedTargets);
+    }
+
+    /// <summary>True for folder names skipped by every scan (dependencies, build, tools).</summary>
+    internal static bool IsExcludedDirectory(string name) => ExcludedDirectories.Contains(name);
+
+    /// <summary>Lists entries sorted like Windows Explorer; empty when unreadable.</summary>
+    internal static List<string> EnumerateSorted(string directory, bool directories) =>
+        SafeEnumerate(() => directories
+            ? Directory.EnumerateDirectories(directory, "*", EnumerationOptions)
+            : Directory.EnumerateFiles(directory, "*", EnumerationOptions));
+
+    private static List<FileTreeNode> BuildChildren(
+        string directory, FileTreeNode? parent, Dictionary<string, FileTreeNode> index,
+        HashSet<string> visitedTargets)
     {
         var result = new List<FileTreeNode>();
 
         foreach (var subDir in SafeEnumerate(() => Directory.EnumerateDirectories(directory, "*", EnumerationOptions)))
         {
             var name = Path.GetFileName(subDir);
-            if (name.StartsWith('.') || ExcludedDirectories.Contains(name))
+            if (ExcludedDirectories.Contains(name))
+                continue;
+
+            // Broken links resolve to null; already visited targets are skipped.
+            if (ResolveRealPath(subDir) is not { } realPath || !visitedTargets.Add(realPath))
                 continue;
 
             var node = new FileTreeNode(name, subDir, isDirectory: true, parent);
-            node.Children.AddRange(BuildChildren(subDir, node, index));
+            foreach (var child in BuildChildren(subDir, node, index, visitedTargets))
+                node.Children.Add(child);
             if (node.Children.Count == 0)
                 continue;
 
@@ -112,6 +172,29 @@ public static class FolderTreeService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns the final target of a symlink / junction, or the normalized path
+    /// itself for a regular folder. Null when the link is broken or unreadable.
+    /// </summary>
+    private static string? ResolveRealPath(string directory)
+    {
+        try
+        {
+            var info = new DirectoryInfo(directory);
+            if (info.LinkTarget == null)
+                return Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+
+            var target = info.ResolveLinkTarget(returnFinalTarget: true);
+            if (target == null || !target.Exists)
+                return null;
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(target.FullName));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private static List<string> SafeEnumerate(Func<IEnumerable<string>> enumerate)

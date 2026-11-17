@@ -1,0 +1,24 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Light theme. Text contrast on WindowBackground/ChromeBackground:
+         PrimaryText 16:1, SecondaryText 5.7:1, MenuPopupText 16:1 (on the light popup). -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ChromeBackground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ChromeBorder" Color="#CCCCCC"/>
+    <SolidColorBrush x:Key="PrimaryText" Color="#1F1F1F"/>
+    <SolidColorBrush x:Key="SecondaryText" Color="#666666"/>
+    <SolidColorBrush x:Key="HoverBackground" Color="#E8E8E8"/>
+    <SolidColorBrush x:Key="PressedBackground" Color="#D6D6D6"/>
+    <SolidColorBrush x:Key="ButtonBackground" Color="#F3F3F3"/>
+    <SolidColorBrush x:Key="SplitterBackground" Color="#E0E0E0"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#0067C0"/>
+    <!-- Scroll bars and tree expander glyph (Controls.xaml). Glyph 6.2:1 on ChromeBackground. -->
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#C2C2C2"/>
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#9A9A9A"/>
+    <SolidColorBrush x:Key="TreeGlyphBrush" Color="#616161"/>
+    <SolidColorBrush x:Key="MenuPopupBackground" Color="#F9F9F9"/>
+    <SolidColorBrush x:Key="MenuPopupText" Color="#1F1F1F"/>
+    <!-- Reversa folder badge: ReversaBadgeText on ReversaBadgeBackground 5.7:1. -->
+    <SolidColorBrush x:Key="ReversaBadgeBackground" Color="#0067C0"/>
+    <SolidColorBrush x:Key="ReversaBadgeText" Color="#FFFFFF"/>
+</ResourceDictionary>

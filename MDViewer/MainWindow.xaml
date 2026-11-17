@@ -10,36 +10,91 @@
         MinHeight="400" MinWidth="600"
         WindowStartupLocation="CenterScreen"
         KeyDown="Window_KeyDown"
-        Closing="Window_Closing">
+        Closing="Window_Closing"
+        AllowDrop="True"
+        DragEnter="Window_DragOver"
+        DragOver="Window_DragOver"
+        Drop="Window_Drop"
+        Background="{DynamicResource WindowBackground}"
+        Foreground="{DynamicResource PrimaryText}">
 
     <Window.Resources>
-        <Style x:Key="ToolbarButton" TargetType="Button">
+        <!-- Based on the themed Button style (Themes/Controls.xaml): hover,
+             pressed and disabled states come from the theme. -->
+        <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="MinWidth" Value="36"/>
             <Setter Property="Height" Value="30"/>
             <Setter Property="Margin" Value="2,0"/>
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="#CCCCCC"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ChromeBorder}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontSize" Value="13"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#E8E8E8"/>
-                </Trigger>
-            </Style.Triggers>
+        </Style>
+
+        <!-- Segmented view selector of Reversa folders (Files / Skills / Flow).
+             Checked uses the badge colors (contrast checked in the themes). -->
+        <Style x:Key="ViewToggle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ChromeBorder}"/>
+            <Setter Property="Padding" Value="10,2"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="GroupName" Value="TreeView"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="3" SnapsToDevicePixels="True">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBackground}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ReversaBadgeBackground}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource ReversaBadgeBackground}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource ReversaBadgeText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- Main menu. Top-level menus and items are named so later features
+             can slot in. -->
+        <Menu Grid.Row="0" x:Name="MainMenu" Padding="2,1">
+            <MenuItem Header="_File" x:Name="FileMenu">
+                <MenuItem Header="Open _Folder…" InputGestureText="Ctrl+O"
+                          Click="OpenFolder_Click" x:Name="OpenFolderMenuItem"/>
+                <MenuItem Header="_Open File…" InputGestureText="Ctrl+Shift+O"
+                          Click="OpenFile_Click" x:Name="OpenFileMenuItem"/>
+            </MenuItem>
+        </Menu>
+
         <!-- Toolbar -->
-        <Border Grid.Row="0" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1" Padding="6,4">
+        <Border Grid.Row="1" BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,0,0,1" Padding="6,4"
+                Background="{DynamicResource ChromeBackground}">
             <DockPanel>
                 <!-- Left side: File operations -->
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
@@ -47,19 +102,37 @@
                             ToolTip="Go back (Alt+Left)" x:Name="BackButton" IsEnabled="False">
                         <TextBlock Text="← Back" FontSize="13"/>
                     </Button>
+                    <!-- Reversa Flow: previous/next document (visible only in the Flow view) -->
+                    <Button Style="{StaticResource ToolbarButton}" Click="FlowPrev_Click"
+                            ToolTip="Previous document in the flow" x:Name="FlowPrevButton"
+                            AutomationProperties.Name="Previous in flow" Visibility="Collapsed">
+                        <TextBlock Text="‹ Prev" FontSize="13"/>
+                    </Button>
+                    <Button Style="{StaticResource ToolbarButton}" Click="FlowNext_Click"
+                            ToolTip="Next document in the flow" x:Name="FlowNextButton"
+                            AutomationProperties.Name="Next in flow" Visibility="Collapsed">
+                        <TextBlock Text="Next ›" FontSize="13"/>
+                    </Button>
                     <Button Style="{StaticResource ToolbarButton}" Click="OpenFolder_Click"
                             ToolTip="Open folder (Ctrl+O)">
                         <TextBlock Text="📁 Open Folder" FontSize="13"/>
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Click="Print_Click"
-                            ToolTip="Print (Ctrl+P)" x:Name="PrintButton" IsEnabled="False">
-                        <TextBlock Text="🖨️ Print" FontSize="13"/>
+                    <Button Style="{StaticResource ToolbarButton}" Click="ThemeButton_Click"
+                            ToolTip="Interface theme" x:Name="ThemeButton"
+                            AutomationProperties.Name="Theme">
+                        <TextBlock Text="🎨 Theme" FontSize="13"/>
+                        <Button.ContextMenu>
+                            <ContextMenu x:Name="ThemeMenu">
+                                <MenuItem Header="_Light" x:Name="ThemeLightItem" Tag="Light"
+                                          IsCheckable="True" Click="ThemeMenuItem_Click"/>
+                                <MenuItem Header="_Dark" x:Name="ThemeDarkItem" Tag="Dark"
+                                          IsCheckable="True" Click="ThemeMenuItem_Click"/>
+                                <MenuItem Header="Use _system setting" x:Name="ThemeSystemItem" Tag="System"
+                                          IsCheckable="True" Click="ThemeMenuItem_Click"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Click="Export_Click"
-                            ToolTip="Export (Ctrl+Shift+S)" x:Name="ExportButton" IsEnabled="False">
-                        <TextBlock Text="📤 Export" FontSize="13"/>
-                    </Button>
-                    <Rectangle Width="1" Fill="#CCCCCC" Margin="8,2"/>
+                    <Rectangle Width="1" Fill="{DynamicResource ChromeBorder}" Margin="8,2"/>
                 </StackPanel>
 
                 <!-- Right side: Zoom controls -->
@@ -84,13 +157,13 @@
                 <!-- Center: File name -->
                 <TextBlock x:Name="FileNameLabel" Text="No file open"
                            VerticalAlignment="Center" HorizontalAlignment="Center"
-                           FontSize="13" Foreground="#666666"
+                           FontSize="13" Foreground="{DynamicResource SecondaryText}"
                            TextTrimming="CharacterEllipsis" Margin="8,0"/>
             </DockPanel>
         </Border>
 
         <!-- Content: viewer + folder tree (tree side is swapped in code) -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="LeftColumn" Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -103,11 +176,26 @@
             <GridSplitter Grid.Column="1" Width="5"
                           HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
-                          Background="#E0E0E0"/>
+                          Background="{DynamicResource SplitterBackground}"/>
 
-            <DockPanel Grid.Column="2" x:Name="TreePanel">
-                <Border DockPanel.Dock="Top" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1" Padding="6,4">
+            <DockPanel Grid.Column="2" x:Name="TreePanel" Background="{DynamicResource ChromeBackground}">
+                <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,0,0,1" Padding="6,4">
                     <DockPanel>
+                        <!-- View selector, only for folders with Reversa installed -->
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,4,0,0"
+                                    x:Name="ViewSelector" Visibility="Collapsed"
+                                    AutomationProperties.Name="Tree view">
+                            <RadioButton Style="{StaticResource ViewToggle}" Content="Files" Tag="Files"
+                                         x:Name="ViewFilesButton" IsChecked="True" Checked="ViewToggle_Checked"
+                                         AutomationProperties.Name="View: Files" ToolTip="Folder tree"/>
+                            <RadioButton Style="{StaticResource ViewToggle}" Content="Skills" Tag="Skills"
+                                         x:Name="ViewSkillsButton" Checked="ViewToggle_Checked"
+                                         AutomationProperties.Name="View: Skills" ToolTip="One entry per skill"/>
+                            <RadioButton Style="{StaticResource ViewToggle}" Content="Flow" Tag="Flow"
+                                         x:Name="ViewFlowButton" Checked="ViewToggle_Checked"
+                                         AutomationProperties.Name="View: Flow"
+                                         ToolTip="Reversa documents in software engineering order"/>
+                        </StackPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                             <Button Style="{StaticResource ToolbarButton}" MinWidth="28" Height="26" Padding="4,0"
                                     Click="RefreshTree_Click" ToolTip="Refresh folder (F5)">
@@ -119,6 +207,15 @@
                                 <TextBlock Text="⇄" FontSize="13"/>
                             </Button>
                         </StackPanel>
+                        <!-- Reversa folder badge -->
+                        <Border DockPanel.Dock="Left" x:Name="ReversaBadge" Visibility="Collapsed"
+                                Background="{DynamicResource ReversaBadgeBackground}" CornerRadius="3"
+                                Padding="6,1" Margin="0,0,6,0" VerticalAlignment="Center">
+                            <!-- A Border has no automation peer: the label carries the
+                                 accessible text ("Reversa x.y", help: state.json path). -->
+                            <TextBlock x:Name="ReversaBadgeLabel" Text="Reversa" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource ReversaBadgeText}"/>
+                        </Border>
                         <TextBlock x:Name="FolderNameLabel" Text="No folder open"
                                    FontSize="13" FontWeight="SemiBold"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
@@ -129,19 +226,43 @@
                           FontSize="13"
                           SelectedItemChanged="FolderTreeView_SelectedItemChanged">
                     <TreeView.Resources>
-                        <Style TargetType="TreeViewItem">
+                        <!-- Builds on the themed template in Themes/Controls.xaml. -->
+                        <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
-                            <Setter Property="ToolTip" Value="{Binding FullPath}"/>
+                            <Setter Property="ToolTip" Value="{Binding ToolTipText}"/>
+                            <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
                             <EventSetter Event="Selected" Handler="TreeViewItem_Selected"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSection}" Value="True">
+                                    <Setter Property="ToolTip" Value="Files opened outside the root folder (this session only)"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsPending}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
+                                    <Setter Property="ToolTip" Value="No documents yet"/>
+                                </DataTrigger>
+                            </Style.Triggers>
                         </Style>
                     </TreeView.Resources>
                     <TreeView.ItemTemplate>
                         <HierarchicalDataTemplate ItemsSource="{Binding Children}">
                             <StackPanel Orientation="Horizontal" Margin="0,1">
                                 <TextBlock Text="{Binding Icon}" Margin="0,0,5,0"/>
-                                <TextBlock Text="{Binding Name}"/>
+                                <TextBlock Text="{Binding Name}" x:Name="NodeName"/>
                             </StackPanel>
+                            <HierarchicalDataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsSection}" Value="True">
+                                    <Setter TargetName="NodeName" Property="FontWeight" Value="SemiBold"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                                    <Setter TargetName="NodeName" Property="FontWeight" Value="SemiBold"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                    <Setter TargetName="NodeName" Property="FontWeight" Value="Bold"/>
+                                    <Setter TargetName="NodeName" Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                </DataTrigger>
+                            </HierarchicalDataTemplate.Triggers>
                         </HierarchicalDataTemplate>
                     </TreeView.ItemTemplate>
                 </TreeView>
@@ -149,9 +270,10 @@
         </Grid>
 
         <!-- Status Bar -->
-        <Border Grid.Row="2" BorderBrush="#CCCCCC" BorderThickness="0,1,0,0" Padding="8,3">
+        <Border Grid.Row="3" BorderBrush="{DynamicResource ChromeBorder}" BorderThickness="0,1,0,0" Padding="8,3"
+                Background="{DynamicResource ChromeBackground}">
             <TextBlock x:Name="StatusLabel" Text="Ready"
-                       FontSize="11" Foreground="#888888"/>
+                       FontSize="11" Foreground="{DynamicResource SecondaryText}"/>
         </Border>
     </Grid>
 </Window>

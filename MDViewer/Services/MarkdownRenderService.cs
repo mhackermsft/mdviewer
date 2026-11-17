@@ -1,6 +1,4 @@
 using System.IO;
-using System.Text;
-using System.Text.RegularExpressions;
 using Markdig;
 
 namespace MDViewer.Services;
@@ -9,7 +7,6 @@ public class MarkdownRenderService
 {
     private readonly MarkdownPipeline _pipeline;
     private readonly string _htmlTemplate;
-    private readonly string _mermaidJs;
 
     public MarkdownRenderService()
     {
@@ -18,71 +15,21 @@ public class MarkdownRenderService
             .Build();
 
         _htmlTemplate = LoadEmbeddedResource("MDViewer.Assets.template.html");
-        _mermaidJs = LoadEmbeddedResource("MDViewer.Assets.mermaid.min.js");
     }
 
-    public string RenderToHtml(string markdown, bool isDarkTheme, string? baseHref = null)
+    /// <param name="flowFooter">
+    /// Labels of the previous/next documents of the Reversa Flow (null: no
+    /// footer; a null label: no link on that side).
+    /// </param>
+    public string RenderToHtml(string markdown, bool isDarkTheme, string? baseHref = null,
+        (string? PrevLabel, string? NextLabel)? flowFooter = null)
     {
         var htmlContent = Markdown.ToHtml(markdown, _pipeline);
-        return ApplyTemplate(htmlContent, isDarkTheme, baseHref);
+        return ApplyTemplate(htmlContent, isDarkTheme, baseHref, flowFooter);
     }
 
-    /// <summary>
-    /// Renders multiple linked documents into a single HTML page.
-    /// Inter-document links are rewritten to internal anchors.
-    /// </summary>
-    public string RenderMergedToHtml(
-        IReadOnlyList<LinkedDocument> documents, bool isDarkTheme, bool addPageBreaks = true)
-    {
-        var pathToSlug = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var doc in documents)
-            pathToSlug[doc.FilePath] = doc.Id;
-
-        var combined = new StringBuilder();
-        for (var i = 0; i < documents.Count; i++)
-        {
-            var doc = documents[i];
-            var html = Markdown.ToHtml(doc.MarkdownContent, _pipeline);
-            html = RewriteInterDocumentLinks(html, doc.FilePath, pathToSlug);
-
-            var extraClass = i > 0
-                ? (addPageBreaks ? " document-page-break" : " document-separator")
-                : "";
-            combined.Append($"<div class=\"document-section{extraClass}\" id=\"{doc.Id}\">");
-            combined.Append(html);
-            combined.Append("</div>");
-        }
-
-        return ApplyTemplate(combined.ToString(), isDarkTheme);
-    }
-
-    /// <summary>
-    /// Converts WebView2-targeted HTML into a self-contained standalone HTML file
-    /// that works when opened directly in any browser.
-    /// </summary>
-    public string ConvertToStandaloneHtml(string html)
-    {
-        // Inline the mermaid.js library so the file works offline
-        html = html.Replace(
-            "<script src=\"https://assets.local/mermaid.min.js\"></script>",
-            $"<script>{_mermaidJs}</script>");
-
-        // Remove WebView2 host signaling (not available in a regular browser)
-        html = html.Replace(
-            "window.chrome.webview.postMessage('render-complete');",
-            "");
-
-        // Let browsers handle link navigation natively instead of delegating to host
-        html = html.Replace(
-            @"// All other links: delegate to the host application
-            e.preventDefault();
-            window.chrome.webview.postMessage(JSON.stringify({ type: 'navigate', href: href }));",
-            "// Links navigate normally in standalone HTML");
-
-        return html;
-    }
-
-    private string ApplyTemplate(string htmlContent, bool isDarkTheme, string? baseHref = null)
+    private string ApplyTemplate(string htmlContent, bool isDarkTheme, string? baseHref,
+        (string? PrevLabel, string? NextLabel)? flowFooter)
     {
         var mermaidTheme = isDarkTheme ? "dark" : "default";
 
@@ -90,52 +37,40 @@ public class MarkdownRenderService
             ? ""
             : $"<base href=\"{System.Net.WebUtility.HtmlEncode(baseHref)}\">";
 
-        var html = _htmlTemplate
-            .Replace("{{CONTENT}}", htmlContent)
+        // Fresh per render, so a document can never guess it and run a script.
+        var nonce = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(18));
+
+        // Every template placeholder is replaced before the content goes in, so
+        // a document that contains placeholder text (e.g. "{{NONCE}}") never
+        // receives the value.
+        var template = isDarkTheme
+            ? _htmlTemplate.Replace("<html lang=\"en\">", "<html lang=\"en\" data-theme=\"dark\">")
+            : _htmlTemplate;
+
+        return template
+            .Replace("{{FLOW_FOOTER}}", BuildFlowFooter(flowFooter))
             .Replace("{{BASE_HREF}}", baseTag)
-            .Replace("{{MERMAID_THEME}}", mermaidTheme);
-
-        if (isDarkTheme)
-        {
-            html = html.Replace("<html lang=\"en\">", "<html lang=\"en\" data-theme=\"dark\">");
-        }
-
-        return html;
+            .Replace("{{MERMAID_THEME}}", mermaidTheme)
+            .Replace("{{NONCE}}", nonce)
+            .Replace("{{CONTENT}}", htmlContent);
     }
 
-    private static string RewriteInterDocumentLinks(
-        string html, string documentPath, Dictionary<string, string> pathToSlug)
+    /// <summary>
+    /// Previous/next links of the Reversa Flow. The links carry no path: the
+    /// page's click handler sends {type:'flow', dir} to the host.
+    /// </summary>
+    private static string BuildFlowFooter((string? PrevLabel, string? NextLabel)? footer)
     {
-        var docDir = Path.GetDirectoryName(documentPath) ?? "";
+        if (footer is not { } f || (f.PrevLabel == null && f.NextLabel == null))
+            return "";
 
-        return Regex.Replace(html, @"href=""([^""]+)""", match =>
-        {
-            var fullHref = match.Groups[1].Value;
-
-            if (fullHref.StartsWith('#')
-                || fullHref.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                || fullHref.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-                || fullHref.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
-                return match.Value;
-
-            var href = fullHref;
-            var hashIndex = fullHref.IndexOf('#');
-            if (hashIndex >= 0)
-                href = fullHref[..hashIndex];
-
-            if (string.IsNullOrEmpty(href))
-                return match.Value;
-
-            try
-            {
-                var resolvedPath = Path.GetFullPath(Path.Combine(docDir, href));
-                if (pathToSlug.TryGetValue(resolvedPath, out var slug))
-                    return $"href=\"#{slug}\"";
-            }
-            catch { }
-
-            return match.Value;
-        });
+        var prev = f.PrevLabel == null
+            ? ""
+            : $"<a href=\"#\" class=\"flow-prev\" data-flow=\"prev\">← Previous: {System.Net.WebUtility.HtmlEncode(f.PrevLabel)}</a>";
+        var next = f.NextLabel == null
+            ? ""
+            : $"<a href=\"#\" class=\"flow-next\" data-flow=\"next\">Next: {System.Net.WebUtility.HtmlEncode(f.NextLabel)} →</a>";
+        return $"<nav class=\"flow-footer\" aria-label=\"Reversa flow\">{prev}{next}</nav>";
     }
 
     private static string LoadEmbeddedResource(string resourceName)

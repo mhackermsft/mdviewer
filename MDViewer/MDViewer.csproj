@@ -12,9 +12,15 @@
     <Description>A simple Markdown viewer with Mermaid diagram support</Description>
   </PropertyGroup>
 
+  <!-- Exact versions: a floating range ("0.*") made every build pick whatever
+       was newest that day. Update deliberately, then rebuild and run the tests. -->
   <ItemGroup>
-    <PackageReference Include="Markdig" Version="0.*" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.*" />
+    <PackageReference Include="Markdig" Version="0.45.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MDViewer.Tests" />
   </ItemGroup>
 
   <ItemGroup>

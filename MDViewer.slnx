@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MDViewer.Tests/MDViewer.Tests.csproj" />
+  <Project Path="MDViewer/MDViewer.csproj" />
+</Solution>

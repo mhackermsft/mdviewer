@@ -1,0 +1,35 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Dark theme. Text contrast: PrimaryText 13:1 on WindowBackground,
+         SecondaryText 7:1 on ChromeBackground, selection text 7.6:1 / 9.7:1. -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#1E1E1E"/>
+    <SolidColorBrush x:Key="ChromeBackground" Color="#252526"/>
+    <SolidColorBrush x:Key="ChromeBorder" Color="#3F3F46"/>
+    <SolidColorBrush x:Key="PrimaryText" Color="#E6E6E6"/>
+    <SolidColorBrush x:Key="SecondaryText" Color="#A8A8A8"/>
+    <SolidColorBrush x:Key="HoverBackground" Color="#3E3E42"/>
+    <SolidColorBrush x:Key="PressedBackground" Color="#505055"/>
+    <SolidColorBrush x:Key="ButtonBackground" Color="#333337"/>
+    <SolidColorBrush x:Key="SplitterBackground" Color="#333337"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#4CA0E8"/>
+    <!-- Menu popups (Controls.xaml templates): MenuPopupText 12:1 on MenuPopupBackground. -->
+    <SolidColorBrush x:Key="MenuPopupBackground" Color="#2B2B2B"/>
+    <SolidColorBrush x:Key="MenuPopupText" Color="#E6E6E6"/>
+    <!-- Reversa folder badge: ReversaBadgeText on ReversaBadgeBackground 5.9:1. -->
+    <SolidColorBrush x:Key="ReversaBadgeBackground" Color="#4CA0E8"/>
+    <SolidColorBrush x:Key="ReversaBadgeText" Color="#1E1E1E"/>
+
+    <!-- Scroll bars and tree expander glyph (Controls.xaml). Glyph 9:1 on ChromeBackground. -->
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#5A5A5E"/>
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#7E7E85"/>
+    <SolidColorBrush x:Key="TreeGlyphBrush" Color="#C8C8C8"/>
+
+    <!-- Selection colors used by the TreeViewItem template; ControlBrush paints
+         the corner between two scroll bars. -->
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#252526"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#264F78"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#37373D"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#E6E6E6"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.ControlTextBrushKey}" Color="#E6E6E6"/>
+</ResourceDictionary>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using MDViewer.Services;
 using Microsoft.Web.WebView2.Core;
 
 namespace MDViewer;
@@ -9,6 +10,12 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Interface theme before any window appears; each window then gets a
+        // title bar that matches it as soon as it loads.
+        ThemeApplier.Apply(ThemeService.ResolveIsDark(SettingsService.Theme));
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, _) => ThemeApplier.ApplyTitleBar((Window)sender)));
 
         try
         {
@@ -32,8 +39,16 @@ public partial class App : Application
                 });
             }
 
+            // Leave without ever creating the main window.
             Shutdown(1);
+            return;
         }
+
+        SettingsService.RemoveObsoleteValues();
+        LegacyFileAssociation.Remove();
+
+        // No StartupUri: the main window exists only when the runtime is present.
+        new MainWindow().Show();
     }
 }
 
