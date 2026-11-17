@@ -91,4 +91,9 @@ internal static partial class NativeMethods
 {
     [System.Runtime.InteropServices.LibraryImport("shell32.dll")]
     internal static partial void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    // Natural ("file2" < "file10") ordering, as used by Windows Explorer.
+    [System.Runtime.InteropServices.LibraryImport("shlwapi.dll",
+        StringMarshalling = System.Runtime.InteropServices.StringMarshalling.Utf16)]
+    internal static partial int StrCmpLogicalW(string psz1, string psz2);
 }

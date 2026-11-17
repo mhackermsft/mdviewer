@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using MDViewer.Models;
 using MDViewer.Services;
 using Microsoft.Web.WebView2.Core;
 
@@ -22,6 +24,20 @@ public partial class MainWindow : Window
     private System.Timers.Timer? _debounceTimer;
     private readonly Stack<string> _navigationHistory = new();
 
+    // Folder mode state
+    private string? _rootFolder;
+    private FolderTree? _folderTree;
+    private FileTreeNode? _selectedNode;
+    private bool _treeOnLeft;
+    private string? _placeholderMarkdown;
+
+    private const double TreeMinWidth = 150;
+    private const double ViewerMinWidth = 300;
+
+    private const string WelcomeMarkdown =
+        "# MDViewer\n\nNo folder open.\n\n" +
+        "Click **📁 Open Folder** (Ctrl+O) to choose a folder containing Markdown files.";
+
     private const double MinZoom = 0.25;
     private const double MaxZoom = 5.0;
     private const double ZoomStep = 0.1;
@@ -37,6 +53,8 @@ public partial class MainWindow : Window
         _themeService = new ThemeService();
         _themeService.ThemeChanged += OnThemeChanged;
 
+        ApplyTreeLayout(SettingsService.TreeOnLeft, SettingsService.TreeWidth);
+
         Loaded += MainWindow_Loaded;
     }
 
@@ -50,16 +68,53 @@ public partial class MainWindow : Window
             PromptFileAssociation();
         }
 
-        // Open file from command line args if provided
-        var args = Environment.GetCommandLineArgs();
-        if (args.Length > 1 && File.Exists(args[1]))
-        {
-            await OpenMarkdownFile(args[1]);
-        }
+        var (folder, file) = ResolveStartupTarget();
+        if (folder != null)
+            await OpenFolder(folder, file);
         else
+            ShowPlaceholder(WelcomeMarkdown);
+    }
+
+    /// <summary>
+    /// Decides which folder/file to open at startup: a folder or file passed on
+    /// the command line (e.g. via file association) wins; otherwise the last
+    /// opened folder and file are restored.
+    /// </summary>
+    private static (string? Folder, string? File) ResolveStartupTarget()
+    {
+        var lastFolder = SettingsService.LastFolder;
+        if (lastFolder != null && !Directory.Exists(lastFolder))
+            lastFolder = null;
+
+        var args = Environment.GetCommandLineArgs();
+        if (args.Length > 1)
         {
-            ShowOpenFileDialog();
+            try
+            {
+                var arg = Path.GetFullPath(args[1]);
+                if (Directory.Exists(arg))
+                    return (arg, null);
+
+                if (File.Exists(arg))
+                {
+                    // Keep the last folder if the file lives inside it,
+                    // otherwise use the file's own folder.
+                    var folder = lastFolder != null && IsUnderFolder(arg, lastFolder)
+                        ? lastFolder
+                        : Path.GetDirectoryName(arg);
+                    return (folder, arg);
+                }
+            }
+            catch { /* invalid path — fall through */ }
         }
+
+        return (lastFolder, lastFolder != null ? SettingsService.LastFile : null);
+    }
+
+    private static bool IsUnderFolder(string filePath, string folder)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(filePath).StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task InitializeWebView()
@@ -185,6 +240,11 @@ public partial class MainWindow : Window
             }
 
             _currentFilePath = filePath;
+            _placeholderMarkdown = null;
+            SyncTreeSelection(filePath);
+            if (_rootFolder != null && IsUnderFolder(filePath, _rootFolder))
+                SettingsService.LastFile = filePath;
+
             var fileName = System.IO.Path.GetFileName(filePath);
             Title = $"{fileName} — MDViewer";
             FileNameLabel.Text = filePath;
@@ -299,8 +359,7 @@ public partial class MainWindow : Window
 
         if ((ext is ".md" or ".markdown") && File.Exists(targetPath))
         {
-            _navigationHistory.Push(_currentFilePath);
-            BackButton.IsEnabled = true;
+            PushHistory();
             await OpenMarkdownFile(targetPath);
 
             if (!string.IsNullOrEmpty(anchor))
@@ -327,37 +386,221 @@ public partial class MainWindow : Window
         await OpenMarkdownFile(previousFile);
     }
 
+    private void PushHistory()
+    {
+        if (_currentFilePath == null) return;
+        _navigationHistory.Push(_currentFilePath);
+        BackButton.IsEnabled = true;
+    }
+
     #endregion
 
-    #region File Operations
+    #region Folder
 
-    private void ShowOpenFileDialog()
+    private async Task ShowOpenFolderDialog()
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "Markdown files (*.md;*.markdown)|*.md;*.markdown|All files (*.*)|*.*",
-            Title = "Open Markdown File",
-            CheckFileExists = true
-        };
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Open Folder" };
+        if (_rootFolder != null)
+            dialog.InitialDirectory = _rootFolder;
 
-        if (dialog.ShowDialog() == true)
+        if (dialog.ShowDialog(this) == true)
+            await OpenFolder(dialog.FolderName);
+    }
+
+    private async void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        await ShowOpenFolderDialog();
+    }
+
+    /// <summary>
+    /// Opens <paramref name="folder"/>: rebuilds the tree from scratch and shows
+    /// <paramref name="preferredFile"/> if it exists, otherwise the first
+    /// Markdown file of the tree.
+    /// </summary>
+    private async Task OpenFolder(string folder, string? preferredFile = null)
+    {
+        _rootFolder = Path.GetFullPath(folder);
+        _folderTree = null;
+        _selectedNode = null;
+        SettingsService.LastFolder = _rootFolder;
+
+        _navigationHistory.Clear();
+        BackButton.IsEnabled = false;
+
+        await LoadFolderTree();
+
+        string? target = null;
+        if (preferredFile != null && File.Exists(preferredFile))
+            target = Path.GetFullPath(preferredFile);
+        target ??= _folderTree?.FirstFile()?.FullPath;
+
+        if (target != null)
         {
-            if (_currentFilePath != null)
-            {
-                _navigationHistory.Push(_currentFilePath);
-                BackButton.IsEnabled = true;
-            }
-            _ = OpenMarkdownFile(dialog.FileName);
+            await OpenMarkdownFile(target);
         }
-        else if (_currentFilePath == null)
+        else
         {
-            StatusLabel.Text = "No file selected";
+            SettingsService.LastFile = null;
+            ShowPlaceholder(
+                $"# No Markdown files\n\nThe folder `{_rootFolder}` does not contain any Markdown (`.md`) files.");
         }
     }
 
-    private void OpenFile_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Scans the current root folder and (re)binds the tree, keeping folders
+    /// that were expanded before expanded.
+    /// </summary>
+    private async Task LoadFolderTree()
     {
-        ShowOpenFileDialog();
+        var root = _rootFolder;
+        if (root == null) return;
+
+        var expanded = _folderTree?.AllNodes()
+            .Where(n => n.IsDirectory && n.IsExpanded)
+            .Select(n => n.FullPath)
+            .ToList() ?? new List<string>();
+
+        FolderNameLabel.Text = Path.GetFileName(Path.TrimEndingDirectorySeparator(root)) is { Length: > 0 } name
+            ? name
+            : root;
+        FolderNameLabel.ToolTip = root;
+        StatusLabel.Text = "Scanning folder...";
+
+        FolderTree tree;
+        try
+        {
+            tree = await Task.Run(() => FolderTreeService.Build(root));
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = "Failed to read folder";
+            MessageBox.Show($"Failed to read folder:\n{ex.Message}",
+                "MDViewer - Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        // Another folder was opened while scanning
+        if (!string.Equals(root, _rootFolder, StringComparison.OrdinalIgnoreCase)) return;
+
+        foreach (var path in expanded)
+        {
+            if (tree.Find(path) is { } node)
+                node.IsExpanded = true;
+        }
+
+        _folderTree = tree;
+        _selectedNode = null;
+        FolderTreeView.ItemsSource = tree.Nodes;
+        StatusLabel.Text = "Ready";
+    }
+
+    private async Task RefreshFolderTree()
+    {
+        if (_rootFolder == null) return;
+
+        if (!Directory.Exists(_rootFolder))
+        {
+            MessageBox.Show($"The folder no longer exists:\n{_rootFolder}",
+                "MDViewer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        await LoadFolderTree();
+        SyncTreeSelection(_currentFilePath);
+    }
+
+    private async void RefreshTree_Click(object sender, RoutedEventArgs e)
+    {
+        await RefreshFolderTree();
+    }
+
+    /// <summary>
+    /// Selects the tree node of <paramref name="filePath"/> (expanding its parent
+    /// folders), or clears the selection when the file is not part of the tree.
+    /// </summary>
+    private void SyncTreeSelection(string? filePath)
+    {
+        var node = filePath != null ? _folderTree?.Find(filePath) : null;
+        if (ReferenceEquals(node, _selectedNode)) return;
+
+        if (_selectedNode != null)
+            _selectedNode.IsSelected = false;
+
+        _selectedNode = node;
+        if (node == null) return;
+
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+            parent.IsExpanded = true;
+        node.IsSelected = true;
+    }
+
+    private async void FolderTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (e.NewValue is not FileTreeNode node) return;
+        _selectedNode = node;
+
+        if (node.IsDirectory) return;
+        if (string.Equals(node.FullPath, _currentFilePath, StringComparison.OrdinalIgnoreCase)) return;
+
+        PushHistory();
+        await OpenMarkdownFile(node.FullPath);
+    }
+
+    private void TreeViewItem_Selected(object sender, RoutedEventArgs e)
+    {
+        // Selected bubbles through parent items; only scroll the item itself.
+        if (sender is TreeViewItem item && ReferenceEquals(item, e.OriginalSource))
+            item.BringIntoView();
+    }
+
+    /// <summary>Shows a static message instead of a document.</summary>
+    private void ShowPlaceholder(string markdown)
+    {
+        _placeholderMarkdown = markdown;
+        _currentFilePath = null;
+        _pendingScrollRatio = null;
+        _fileWatcher?.Dispose();
+        _fileWatcher = null;
+        _debounceTimer?.Dispose();
+        _debounceTimer = null;
+        SyncTreeSelection(null);
+
+        Title = "MDViewer";
+        FileNameLabel.Text = _rootFolder ?? "No folder open";
+        StatusLabel.Text = "Ready";
+
+        if (!_webViewReady) return;
+        _renderComplete = false;
+        WebView.NavigateToString(_renderService.RenderToHtml(markdown, _themeService.IsDarkTheme));
+    }
+
+    #endregion
+
+    #region Tree Panel Layout
+
+    private ColumnDefinition TreeColumn => _treeOnLeft ? LeftColumn : RightColumn;
+
+    private void ApplyTreeLayout(bool treeOnLeft, double treeWidth)
+    {
+        _treeOnLeft = treeOnLeft;
+        var treeColumn = treeOnLeft ? LeftColumn : RightColumn;
+        var viewerColumn = treeOnLeft ? RightColumn : LeftColumn;
+
+        treeColumn.Width = new GridLength(Math.Max(treeWidth, TreeMinWidth));
+        treeColumn.MinWidth = TreeMinWidth;
+        viewerColumn.Width = new GridLength(1, GridUnitType.Star);
+        viewerColumn.MinWidth = ViewerMinWidth;
+
+        Grid.SetColumn(TreePanel, treeOnLeft ? 0 : 2);
+        Grid.SetColumn(WebView, treeOnLeft ? 2 : 0);
+
+        MoveTreeButton.ToolTip = treeOnLeft ? "Move panel to the right" : "Move panel to the left";
+    }
+
+    private void MoveTree_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyTreeLayout(!_treeOnLeft, TreeColumn.ActualWidth);
+        SettingsService.TreeOnLeft = _treeOnLeft;
     }
 
     #endregion
@@ -578,14 +821,14 @@ public partial class MainWindow : Window
     {
         if (!_webViewReady) return;
 
-        // Re-render if we have a file loaded, or just toggle CSS
-        if (_currentFilePath != null)
+        // Re-render the current file or placeholder with the new theme
+        await Dispatcher.InvokeAsync(async () =>
         {
-            await Dispatcher.InvokeAsync(async () =>
-            {
+            if (_currentFilePath != null)
                 await OpenMarkdownFile(_currentFilePath);
-            });
-        }
+            else if (_placeholderMarkdown != null)
+                ShowPlaceholder(_placeholderMarkdown);
+        });
     }
 
     #endregion
@@ -608,12 +851,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.F5)
+        {
+            _ = RefreshFolderTree();
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
 
         switch (e.Key)
         {
             case Key.O:
-                ShowOpenFileDialog();
+                _ = ShowOpenFolderDialog();
                 e.Handled = true;
                 break;
             case Key.P:
@@ -673,6 +923,9 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (TreeColumn.ActualWidth > 0)
+            SettingsService.TreeWidth = TreeColumn.ActualWidth;
+
         _fileWatcher?.Dispose();
         _debounceTimer?.Dispose();
         _themeService.Dispose();

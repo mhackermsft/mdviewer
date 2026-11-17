@@ -47,9 +47,9 @@
                             ToolTip="Go back (Alt+Left)" x:Name="BackButton" IsEnabled="False">
                         <TextBlock Text="← Back" FontSize="13"/>
                     </Button>
-                    <Button Style="{StaticResource ToolbarButton}" Click="OpenFile_Click"
-                            ToolTip="Open file (Ctrl+O)">
-                        <TextBlock Text="📂 Open" FontSize="13"/>
+                    <Button Style="{StaticResource ToolbarButton}" Click="OpenFolder_Click"
+                            ToolTip="Open folder (Ctrl+O)">
+                        <TextBlock Text="📁 Open Folder" FontSize="13"/>
                     </Button>
                     <Button Style="{StaticResource ToolbarButton}" Click="Print_Click"
                             ToolTip="Print (Ctrl+P)" x:Name="PrintButton" IsEnabled="False">
@@ -89,9 +89,64 @@
             </DockPanel>
         </Border>
 
-        <!-- WebView2 Content -->
-        <wv2:WebView2 Grid.Row="1" x:Name="WebView"
-                      DefaultBackgroundColor="Transparent"/>
+        <!-- Content: viewer + folder tree (tree side is swapped in code) -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftColumn" Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition x:Name="RightColumn" Width="260"/>
+            </Grid.ColumnDefinitions>
+
+            <wv2:WebView2 Grid.Column="0" x:Name="WebView"
+                          DefaultBackgroundColor="Transparent"/>
+
+            <GridSplitter Grid.Column="1" Width="5"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
+                          Background="#E0E0E0"/>
+
+            <DockPanel Grid.Column="2" x:Name="TreePanel">
+                <Border DockPanel.Dock="Top" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1" Padding="6,4">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource ToolbarButton}" MinWidth="28" Height="26" Padding="4,0"
+                                    Click="RefreshTree_Click" ToolTip="Refresh folder (F5)">
+                                <TextBlock Text="⟳" FontSize="13"/>
+                            </Button>
+                            <Button Style="{StaticResource ToolbarButton}" MinWidth="28" Height="26" Padding="4,0"
+                                    Click="MoveTree_Click" x:Name="MoveTreeButton"
+                                    ToolTip="Move panel to the left">
+                                <TextBlock Text="⇄" FontSize="13"/>
+                            </Button>
+                        </StackPanel>
+                        <TextBlock x:Name="FolderNameLabel" Text="No folder open"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Border>
+
+                <TreeView x:Name="FolderTreeView" BorderThickness="0" Padding="2,4"
+                          FontSize="13"
+                          SelectedItemChanged="FolderTreeView_SelectedItemChanged">
+                    <TreeView.Resources>
+                        <Style TargetType="TreeViewItem">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                            <Setter Property="ToolTip" Value="{Binding FullPath}"/>
+                            <EventSetter Event="Selected" Handler="TreeViewItem_Selected"/>
+                        </Style>
+                    </TreeView.Resources>
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                            <StackPanel Orientation="Horizontal" Margin="0,1">
+                                <TextBlock Text="{Binding Icon}" Margin="0,0,5,0"/>
+                                <TextBlock Text="{Binding Name}"/>
+                            </StackPanel>
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+            </DockPanel>
+        </Grid>
 
         <!-- Status Bar -->
         <Border Grid.Row="2" BorderBrush="#CCCCCC" BorderThickness="0,1,0,0" Padding="8,3">
