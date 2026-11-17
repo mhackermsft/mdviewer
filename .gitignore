@@ -35,3 +35,15 @@ project.lock.json
 
 # Publish output
 publish/
+
+
+# Reversa (framework, estado e artefatos gerados)
+.agents/
+.claude/
+.reversa/
+_reversa_sdd/
+_reversa_forward/
+_reversa_docs/
+_reversa_bugs/
+_reversa_refactor/
+CLAUDE.md
