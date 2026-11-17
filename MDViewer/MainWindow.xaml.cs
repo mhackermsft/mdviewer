@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -31,18 +30,10 @@ public partial class MainWindow : Window
     // reached NavigationStarting. Any other navigation is cancelled.
     private int _hostNavigationsPending;
 
-    // Folder mode state
-    private string? _rootFolder;
-    private FolderTree? _folderTree;
-    private FileTreeNode? _selectedNode;
+    // Root folder, tree, Reversa views and the "Open files" section.
+    private readonly FolderViewModel _folder = new();
     private bool _treeOnLeft;
     private string? _placeholderMarkdown;
-
-    // "Open files" section: Markdown files opened outside the folder tree
-    // (menu, drag and drop, links). Session only, never persisted.
-    private readonly FileTreeNode _openFilesSection =
-        new("Open files", string.Empty, isDirectory: true, parent: null) { IsSection = true, IsExpanded = true };
-    private readonly ObservableCollection<FileTreeNode> _treeItems = new();
 
     private const double TreeMinWidth = 150;
     private const double ViewerMinWidth = 300;
@@ -68,7 +59,7 @@ public partial class MainWindow : Window
         _themeService.ThemeChanged += OnThemeChanged;
 
         ApplyTreeLayout(SettingsService.TreeOnLeft, SettingsService.TreeWidth);
-        FolderTreeView.ItemsSource = _treeItems;
+        FolderTreeView.ItemsSource = _folder.Items;
 
         Loaded += MainWindow_Loaded;
     }
@@ -326,8 +317,8 @@ public partial class MainWindow : Window
 
             _currentFilePath = filePath;
             _placeholderMarkdown = null;
-            SyncTreeSelection(filePath);
-            if (_rootFolder != null && IsUnderFolder(filePath, _rootFolder))
+            _folder.SyncSelection(filePath);
+            if (_folder.RootFolder is { } root && IsUnderFolder(filePath, root))
                 SettingsService.LastFile = filePath;
 
             var fileName = System.IO.Path.GetFileName(filePath);
@@ -337,7 +328,7 @@ public partial class MainWindow : Window
 
             var markdown = await File.ReadAllTextAsync(filePath);
             var baseHref = MapDocumentFolder(filePath);
-            (string? PrevLabel, string? NextLabel)? footer = IsFlowFooterActive ? BuildFlowFooter(filePath) : null;
+            (string? PrevLabel, string? NextLabel)? footer = IsFlowFooterActive ? _folder.BuildFlowFooter(filePath) : null;
             var html = _renderService.RenderToHtml(markdown, _themeService.IsDarkTheme, baseHref, footer);
 
             _renderComplete = false;
@@ -458,7 +449,7 @@ public partial class MainWindow : Window
     {
         // A deleted file from the "Open files" section leaves the section too.
         if (_currentFilePath != null)
-            RemoveOpenFile(_currentFilePath);
+            _folder.RemoveOpenFile(_currentFilePath);
 
         ShowPlaceholder(NoFileSelectedMarkdown);
         StatusLabel.Text = "File no longer exists";
@@ -562,8 +553,8 @@ public partial class MainWindow : Window
     private async Task ShowOpenFolderDialog()
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Open Folder" };
-        if (_rootFolder != null)
-            dialog.InitialDirectory = _rootFolder;
+        if (_folder.RootFolder != null)
+            dialog.InitialDirectory = _folder.RootFolder;
 
         if (dialog.ShowDialog(this) == true)
             await OpenFolder(dialog.FolderName);
@@ -582,7 +573,7 @@ public partial class MainWindow : Window
             Filter = "Markdown files (*.md;*.markdown)|*.md;*.markdown",
             CheckFileExists = true
         };
-        var initialDirectory = _currentFilePath != null ? Path.GetDirectoryName(_currentFilePath) : _rootFolder;
+        var initialDirectory = _currentFilePath != null ? Path.GetDirectoryName(_currentFilePath) : _folder.RootFolder;
         if (initialDirectory != null && Directory.Exists(initialDirectory))
             dialog.InitialDirectory = initialDirectory;
 
@@ -615,12 +606,9 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task OpenFolder(string folder, string? preferredFile = null)
     {
-        _rootFolder = Path.GetFullPath(folder);
-        _folderTree = null;
-        _reversa = null;
-        SetViewMode(TreeViewMode.Files);
-        SyncTreeSelection(null);
-        SettingsService.LastFolder = _rootFolder;
+        _folder.Open(folder);
+        UpdateViewSelector();
+        SettingsService.LastFolder = _folder.RootFolder;
 
         _history.Clear();
         BackButton.IsEnabled = false;
@@ -630,7 +618,7 @@ public partial class MainWindow : Window
         string? target = null;
         if (preferredFile != null && File.Exists(preferredFile))
             target = Path.GetFullPath(preferredFile);
-        target ??= _folderTree?.FirstFile()?.FullPath;
+        target ??= _folder.FolderTree?.FirstFile()?.FullPath;
 
         if (target != null)
         {
@@ -640,7 +628,7 @@ public partial class MainWindow : Window
         {
             SettingsService.LastFile = null;
             ShowPlaceholder(
-                $"# No Markdown files\n\nThe folder `{_rootFolder}` does not contain any Markdown (`.md`) files.");
+                $"# No Markdown files\n\nThe folder `{_folder.RootFolder}` does not contain any Markdown (`.md`) files.");
         }
     }
 
@@ -650,18 +638,10 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task LoadFolderTree()
     {
-        var root = _rootFolder;
+        var root = _folder.RootFolder;
         if (root == null) return;
 
-        // Expansion state of each view, by FullPath (synthetic "reversa:" keys
-        // included), so a refresh keeps the tree as the user left it.
-        var filesExpansion = CaptureExpansion(_folderTree);
-        var skillsExpansion = CaptureExpansion(_reversa?.Skills);
-        var flowExpansion = CaptureExpansion(_reversa?.Flow);
-
-        FolderNameLabel.Text = Path.GetFileName(Path.TrimEndingDirectorySeparator(root)) is { Length: > 0 } name
-            ? name
-            : root;
+        FolderNameLabel.Text = _folder.FolderDisplayName;
         FolderNameLabel.ToolTip = root;
         StatusLabel.Text = "Scanning folder...";
 
@@ -669,7 +649,7 @@ public partial class MainWindow : Window
         ReversaProject? reversa;
         try
         {
-            (tree, reversa) = await Task.Run(() => (FolderTreeService.Build(root), DetectReversa(root)));
+            (tree, reversa) = await Task.Run(() => FolderViewModel.Scan(root));
         }
         catch (Exception ex)
         {
@@ -680,110 +660,38 @@ public partial class MainWindow : Window
         }
 
         // Another folder was opened while scanning
-        if (!string.Equals(root, _rootFolder, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_folder.ApplyScan(root, tree, reversa)) return;
 
-        RestoreExpansion(tree, filesExpansion);
-        RestoreExpansion(reversa?.Skills, skillsExpansion);
-        RestoreExpansion(reversa?.Flow, flowExpansion);
-
-        // Files that are now part of the tree leave the "Open files" section.
-        foreach (var openFile in _openFilesSection.Children.ToList())
-        {
-            if (tree.Find(openFile.FullPath) != null)
-                _openFilesSection.Children.Remove(openFile);
-        }
-
-        // The section's nodes survive the rebind: drop the old selection flag,
-        // or the regenerated item would be re-selected (and reopened) later.
-        if (_selectedNode != null)
-            _selectedNode.IsSelected = false;
-
-        _folderTree = tree;
-        _selectedNode = null;
-        ApplyReversaProject(reversa);
-        RebindTree();
+        UpdateReversaBadge();
+        UpdateViewSelector();
         UpdateFlowNavigation();
         StatusLabel.Text = "Ready";
-    }
-
-    /// <summary>
-    /// Composes the tree's items: the "Open files" section first (only when it
-    /// has files), then the nodes of the root folder (if a folder is open).
-    /// </summary>
-    private void RebindTree()
-    {
-        _treeItems.Clear();
-        if (_openFilesSection.Children.Count > 0)
-            _treeItems.Add(_openFilesSection);
-        if (CurrentViewTree is { } tree)
-        {
-            foreach (var node in tree.Nodes)
-                _treeItems.Add(node);
-        }
     }
 
     /// <summary>
     /// Single entry point to show a Markdown file chosen by the user (menu,
     /// drag and drop, link). A file of the folder tree is just shown (and
     /// selected in the tree); any other file is added to the "Open files"
-    /// section (no duplicates, in opening order) and shown, keeping the root
-    /// folder.
+    /// section and shown, keeping the root folder.
     /// </summary>
     private async Task OpenStandaloneFile(string filePath)
     {
-        var fullPath = Path.GetFullPath(filePath);
-        if (_folderTree?.Find(fullPath) == null)
-            AddOpenFile(fullPath);
-        await OpenMarkdownFile(fullPath);
-    }
-
-    private FileTreeNode? FindOpenFile(string filePath)
-    {
-        string fullPath;
-        try { fullPath = Path.GetFullPath(filePath); }
-        catch { return null; }
-
-        return _openFilesSection.Children.FirstOrDefault(n =>
-            string.Equals(n.FullPath, fullPath, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void AddOpenFile(string fullPath)
-    {
-        if (FindOpenFile(fullPath) != null) return;
-
-        _openFilesSection.Children.Add(
-            new FileTreeNode(Path.GetFileName(fullPath), fullPath, isDirectory: false, _openFilesSection));
-        _openFilesSection.IsExpanded = true;
-        if (_openFilesSection.Children.Count == 1)
-            RebindTree();
-    }
-
-    /// <summary>Removes a file from the "Open files" section (hiding it when empty).</summary>
-    private void RemoveOpenFile(string filePath)
-    {
-        if (FindOpenFile(filePath) is not { } node) return;
-
-        if (ReferenceEquals(node, _selectedNode))
-            _selectedNode = null;
-        node.IsSelected = false;
-        _openFilesSection.Children.Remove(node);
-        if (_openFilesSection.Children.Count == 0)
-            RebindTree();
+        await OpenMarkdownFile(_folder.TrackOpenedFile(filePath));
     }
 
     private async Task RefreshFolderTree()
     {
-        if (_rootFolder == null) return;
+        if (_folder.RootFolder is not { } root) return;
 
-        if (!Directory.Exists(_rootFolder))
+        if (!Directory.Exists(root))
         {
-            MessageBox.Show($"The folder no longer exists:\n{_rootFolder}",
+            MessageBox.Show($"The folder no longer exists:\n{root}",
                 "MDViewer", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         await LoadFolderTree();
-        SyncTreeSelection(_currentFilePath);
+        _folder.SyncSelection(_currentFilePath);
     }
 
     private async void RefreshTree_Click(object sender, RoutedEventArgs e)
@@ -791,45 +699,24 @@ public partial class MainWindow : Window
         await RefreshFolderTree();
     }
 
-    /// <summary>
-    /// Selects the tree node of <paramref name="filePath"/> (expanding its parent
-    /// folders), looking in the folder tree and then in the "Open files"
-    /// section, or clears the selection when the file is in neither.
-    /// </summary>
-    private void SyncTreeSelection(string? filePath)
-    {
-        var node = filePath != null ? CurrentViewTree?.Find(filePath) ?? FindOpenFile(filePath) : null;
-        if (ReferenceEquals(node, _selectedNode)) return;
-
-        if (_selectedNode != null)
-            _selectedNode.IsSelected = false;
-
-        _selectedNode = node;
-        if (node == null) return;
-
-        for (var parent = node.Parent; parent != null; parent = parent.Parent)
-            parent.IsExpanded = true;
-        node.IsSelected = true;
-    }
-
     private async void FolderTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
         if (e.NewValue is not FileTreeNode node) return;
-        _selectedNode = node;
+        _folder.OnNodeSelected(node);
 
         if (node.IsDirectory || node.IsSection) return;
         if (string.Equals(node.FullPath, _currentFilePath, StringComparison.OrdinalIgnoreCase)) return;
 
         // A file of the "Open files" section that no longer exists is removed.
-        if (ReferenceEquals(node.Parent, _openFilesSection) && !File.Exists(node.FullPath))
+        if (_folder.IsOpenFile(node) && !File.Exists(node.FullPath))
         {
             MessageBox.Show($"The file no longer exists and was removed from \"Open files\":\n{node.FullPath}",
                 "MDViewer", MessageBoxButton.OK, MessageBoxImage.Warning);
 
             // Leave the selection-change handler before touching the items.
             await Dispatcher.Yield(DispatcherPriority.Background);
-            RemoveOpenFile(node.FullPath);
-            SyncTreeSelection(_currentFilePath);
+            _folder.RemoveOpenFile(node.FullPath);
+            _folder.SyncSelection(_currentFilePath);
             return;
         }
 
@@ -854,10 +741,10 @@ public partial class MainWindow : Window
         _fileWatcher = null;
         _debounceTimer?.Dispose();
         _debounceTimer = null;
-        SyncTreeSelection(null);
+        _folder.SyncSelection(null);
 
         Title = "MDViewer";
-        FileNameLabel.Text = _rootFolder ?? "No folder open";
+        FileNameLabel.Text = _folder.RootFolder ?? "No folder open";
         StatusLabel.Text = "Ready";
         UpdateFlowNavigation();
 
@@ -870,61 +757,17 @@ public partial class MainWindow : Window
 
     #region Reversa
 
-    // Reversa views (feature 010). Read-only: nothing here writes to the folder.
-    private ReversaProject? _reversa;
-    private TreeViewMode _viewMode = TreeViewMode.Files;
+    // Reversa views (feature 010): state and rules live in FolderViewModel;
+    // this region only mirrors them on the badge, the view selector and the
+    // Prev/Next buttons.
 
-    /// <summary>The tree shown by the active view; Files outside Reversa folders.</summary>
-    private FolderTree? CurrentViewTree => _viewMode switch
+    /// <summary>Shows or hides the badge and the view selector.</summary>
+    private void UpdateReversaBadge()
     {
-        TreeViewMode.Skills when _reversa != null => _reversa.Skills,
-        TreeViewMode.Flow when _reversa != null => _reversa.Flow,
-        _ => _folderTree,
-    };
-
-    /// <summary>Detection never fails the folder scan: a broken Reversa install is a plain folder.</summary>
-    private static ReversaProject? DetectReversa(string root)
-    {
-        try { return ReversaProjectService.Detect(root); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or ArgumentException or NotSupportedException)
-        {
-            return null;
-        }
-    }
-
-    private static Dictionary<string, bool> CaptureExpansion(FolderTree? tree)
-    {
-        var state = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        if (tree == null) return state;
-        foreach (var node in tree.AllNodes())
-        {
-            if (node.IsDirectory)
-                state.TryAdd(node.FullPath, node.IsExpanded);
-        }
-        return state;
-    }
-
-    private static void RestoreExpansion(FolderTree? tree, Dictionary<string, bool> state)
-    {
-        if (tree == null || state.Count == 0) return;
-        foreach (var node in tree.AllNodes())
-        {
-            if (node.IsDirectory && state.TryGetValue(node.FullPath, out var expanded))
-                node.IsExpanded = expanded;
-        }
-    }
-
-    /// <summary>Shows or hides the badge and the view selector; a non-Reversa folder falls back to Files.</summary>
-    private void ApplyReversaProject(ReversaProject? project)
-    {
-        _reversa = project;
-
-        if (project == null)
+        if (_folder.Reversa is not { } project)
         {
             ReversaBadge.Visibility = Visibility.Collapsed;
             ViewSelector.Visibility = Visibility.Collapsed;
-            SetViewMode(TreeViewMode.Files);
             return;
         }
 
@@ -940,17 +783,16 @@ public partial class MainWindow : Window
         ViewSelector.Visibility = Visibility.Visible;
     }
 
-    /// <summary>Sets the view without side effects (used on folder open and fallback).</summary>
-    private void SetViewMode(TreeViewMode mode)
+    /// <summary>Checks the selector button of the current view.</summary>
+    private void UpdateViewSelector()
     {
-        _viewMode = mode;
-        var button = mode switch
+        var button = _folder.ViewMode switch
         {
             TreeViewMode.Skills => ViewSkillsButton,
             TreeViewMode.Flow => ViewFlowButton,
             _ => ViewFilesButton,
         };
-        // Checked re-enters ViewToggle_Checked, which is a no-op for the current mode.
+        // Checked re-enters ViewToggle_Checked, which is a no-op for the current view.
         button.IsChecked = true;
     }
 
@@ -967,40 +809,15 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task SwitchView(TreeViewMode mode)
     {
-        if (mode == _viewMode) return;
-        if (mode != TreeViewMode.Files && _reversa == null) return;
-
         var hadFooter = IsFlowFooterActive;
+        if (!_folder.SwitchView(mode, _currentFilePath)) return;
 
-        if (_selectedNode != null)
-            _selectedNode.IsSelected = false;
-        _selectedNode = null;
-
-        _viewMode = mode;
-        RebindTree();
-        SyncTreeSelection(_currentFilePath);
         UpdateFlowNavigation();
-
         if (hadFooter != IsFlowFooterActive && _currentFilePath != null)
             await OpenMarkdownFile(_currentFilePath);
     }
 
-    /// <summary>Position of <paramref name="path"/> in the Flow; -1 when it is not part of it.</summary>
-    private bool IsFlowFooterActive =>
-        _viewMode == TreeViewMode.Flow && FlowNavigator.IndexOf(_reversa?.FlowDocuments, _currentFilePath) >= 0;
-
-    private (string? Prev, string? Next) GetFlowNeighbors(string? path) =>
-        FlowNavigator.Neighbors(_reversa?.FlowDocuments, path);
-
-    /// <summary>Tree label of a Flow document (e.g. "addenda/003-x.md"), else its file name.</summary>
-    private string FlowLabel(string path) =>
-        _reversa?.Flow.Find(path)?.Name ?? Path.GetFileName(path);
-
-    private (string? PrevLabel, string? NextLabel) BuildFlowFooter(string path)
-    {
-        var (prev, next) = GetFlowNeighbors(path);
-        return (prev != null ? FlowLabel(prev) : null, next != null ? FlowLabel(next) : null);
-    }
+    private bool IsFlowFooterActive => _folder.IsFlowActive(_currentFilePath);
 
     /// <summary>Prev/Next toolbar buttons: visible only in the Flow view on a Flow document.</summary>
     private void UpdateFlowNavigation()
@@ -1011,11 +828,11 @@ public partial class MainWindow : Window
         FlowNextButton.Visibility = visibility;
         if (!active) return;
 
-        var (prev, next) = GetFlowNeighbors(_currentFilePath);
+        var (prev, next) = _folder.FlowNeighbors(_currentFilePath);
         FlowPrevButton.IsEnabled = prev != null;
         FlowNextButton.IsEnabled = next != null;
-        FlowPrevButton.ToolTip = prev != null ? $"Previous: {FlowLabel(prev)} (Alt+PgUp)" : "First document of the flow";
-        FlowNextButton.ToolTip = next != null ? $"Next: {FlowLabel(next)} (Alt+PgDn)" : "Last document of the flow";
+        FlowPrevButton.ToolTip = prev != null ? $"Previous: {_folder.FlowLabel(prev)} (Alt+PgUp)" : "First document of the flow";
+        FlowNextButton.ToolTip = next != null ? $"Next: {_folder.FlowLabel(next)} (Alt+PgDn)" : "Last document of the flow";
     }
 
     private async void FlowPrev_Click(object sender, RoutedEventArgs e) => await NavigateFlow(previous: true);
@@ -1035,7 +852,7 @@ public partial class MainWindow : Window
     {
         if (!IsFlowFooterActive) return;
 
-        var (prev, next) = GetFlowNeighbors(_currentFilePath);
+        var (prev, next) = _folder.FlowNeighbors(_currentFilePath);
         var target = previous ? prev : next;
         if (target == null) return;
 
